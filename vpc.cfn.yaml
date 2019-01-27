@@ -1,0 +1,262 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Sample VPN
+Mappings:
+  Config:
+    Vpc:
+      Name: SampleVPC
+      Cidr: 192.168.0.0/16
+    Subnet:
+      Count: 4
+      MaskSize: 8
+    PublicOne:
+      Name: PublicOne
+    PublicTwo:
+      Name: PublicTwo
+    PrivateOne:
+      Name: PrivateOne
+    PrivateTwo:
+      Name: PrivateTwo
+    S3:
+      Name: sample-logs-log
+
+Resources:
+  ### VPC ###
+  SampleVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      CidrBlock: !FindInMap [Config, Vpc, Cidr]
+      Tags:
+        - Key: Name
+          Value: !FindInMap [Config, Vpc, Name]
+  
+  ### Public Subnets ###
+  PublicOne:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select [0, !GetAZs {Ref: "AWS::Region"}]
+      VpcId: !Ref SampleVPC
+      CidrBlock: !Select [0, !Cidr [!GetAtt SampleVPC.CidrBlock, !FindInMap [Config, Subnet, Count], !FindInMap [Config, Subnet, MaskSize]]]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !FindInMap [Config, PublicOne, Name]
+  PublicTwo:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select [1, !GetAZs {Ref: "AWS::Region"}]
+      VpcId: !Ref SampleVPC
+      CidrBlock: !Select [1, !Cidr [!GetAtt SampleVPC.CidrBlock, !FindInMap [Config, Subnet, Count], !FindInMap [Config, Subnet, MaskSize]]]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !FindInMap [Config, PublicTwo, Name]
+
+  ### Private Subnets ###
+  PrivateOne:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select [0, !GetAZs {Ref: "AWS::Region"}]
+      VpcId: !Ref SampleVPC
+      CidrBlock: !Select [2, !Cidr [!GetAtt SampleVPC.CidrBlock, !FindInMap [Config, Subnet, Count], !FindInMap [Config, Subnet, MaskSize]]]
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !FindInMap [Config, PrivateOne, Name]
+  PrivateTwo:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select [1, !GetAZs {Ref: "AWS::Region"}]
+      VpcId: !Ref SampleVPC
+      CidrBlock: !Select [3, !Cidr [!GetAtt SampleVPC.CidrBlock, !FindInMap [Config, Subnet, Count], !FindInMap [Config, Subnet, MaskSize]]]
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !FindInMap [Config, PrivateTwo, Name]
+
+  ### Routing for Public Subnets ###
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !FindInMap [Config, Vpc, Name]
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref SampleVPC
+      InternetGatewayId: !Ref InternetGateway
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref SampleVPC
+      Tags:
+        - Key: Name
+          Value: PublicRoute
+  PublicRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+  SubnetRouteTableAssociationPublicOne:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicOne
+      RouteTableId: !Ref PublicRouteTable
+  SubnetRouteTableAssociationPublicTwo:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicTwo
+      RouteTableId: !Ref PublicRouteTable
+
+  ### Routing for Private Subnets ###
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref SampleVPC
+      Tags:
+        - Key: Name
+          Value: PrivateRoute
+  SubnetRouteTableAssociationPrivateOne:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateOne
+      RouteTableId: !Ref PrivateRouteTable
+  SubnetRouteTableAssociationPrivateTwo:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateTwo
+      RouteTableId: !Ref PrivateRouteTable
+
+  ### VPC Endpoint for DynamoDB ###
+  EndpointDynamoDB:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal: "*"
+            Action: "*"
+            Resource: "*"
+      RouteTableIds:
+        - !Ref PublicRouteTable
+        - !Ref PrivateRouteTable
+      ServiceName: !Join [".", [com, amazonaws, {"Ref": "AWS::Region"}, dynamodb]]
+      VpcId: !Ref SampleVPC
+
+  ### VPC Endpoint for S3 ###
+  EndpointS3:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal: "*"
+            Action: "*"
+            Resource: "*"
+      RouteTableIds:
+        - !Ref PublicRouteTable
+        - !Ref PrivateRouteTable
+      ServiceName: !Join [".", [com, amazonaws, {"Ref": "AWS::Region"}, s3]]
+      VpcId: !Ref SampleVPC
+
+  ### S3 for AWS Logs ###
+  S3AwsLogs:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !FindInMap [Config, S3, Name]
+      AccessControl: Private
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+  BucketPolicyS3AwsLogs:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref S3AwsLogs
+      PolicyDocument:
+        Version: "2012-10-17"
+        Id: AWSLogDeliveryWrite
+        Statement:
+          - Sid: AWSLogDeliveryWrite
+            Effect: Allow
+            Principal:
+              Service: delivery.logs.amazonaws.com
+            Action: s3:PutObject
+            Resource: !Join ["/", [!GetAtt S3AwsLogs.Arn, AWSLogs, !Ref "AWS::AccountId", "*"]]
+            Condition:
+              StringEquals:
+                s3:x-amz-acl: bucket-owner-full-control
+          - Sid: AWSLogDeliveryAclCheck
+            Effect: Allow
+            Principal:
+              Service: delivery.logs.amazonaws.com
+            Action: s3:GetBucketAcl
+            Resource: !GetAtt S3AwsLogs.Arn
+  Flowlog:
+    Type: AWS::EC2::FlowLog
+    Properties:
+      ResourceId: !Ref SampleVPC
+      ResourceType: VPC
+      TrafficType: ALL
+      LogDestinationType: s3
+      LogDestination: !GetAtt S3AwsLogs.Arn
+
+Outputs:
+  VpcId:
+    Description: VPC Id
+    Value: !Ref SampleVPC
+    Export:
+      Name: !Join [":", [!Ref "AWS::StackName", VpcId]]
+  VpcAddress:
+    Description: VPC Address
+    Value: !GetAtt SampleVPC.CidrBlock
+    Export:
+      Name: !Join [":", [!Ref "AWS::StackName", VpcAddress]]
+  PublicOneId:
+    Description: PublicOne SubnetId
+    Value: !Ref PublicOne
+    Export:
+      Name: !Join [":", [!Ref "AWS::StackName", PublicOneId]]
+  PublicOneAz:
+    Description: PublicOne Az
+    Value: !GetAtt PublicOne.AvailabilityZone
+    Export:
+      Name: !Join [":", [!Ref "AWS::StackName", PublicOneAz]]
+  PublicTwoId:
+    Description: PublicTwo SubnetId
+    Value: !Ref PublicTwo
+    Export:
+      Name: !Join [":", [!Ref "AWS::StackName", PublicTwoId]]
+  PublicTwoAz:
+    Description: PublicTwo Az
+    Value: !GetAtt PublicTwo.AvailabilityZone
+    Export:
+      Name: !Join [":", [!Ref "AWS::StackName", PublicTwoAz]]
+  PrivateOneId:
+    Description: PrivateOne SubnetId
+    Value: !Ref PrivateOne
+    Export:
+      Name: !Join [":", [!Ref "AWS::StackName", PrivateOneId]]
+  PrivateOneAz:
+    Description: PrivateOne Az
+    Value: !GetAtt PrivateOne.AvailabilityZone
+    Export:
+      Name: !Join [":", [!Ref "AWS::StackName", PrivateOneAz]]
+  PrivateTwoId:
+    Description: PrivateTwo SubnetId
+    Value: !Ref PrivateTwo
+    Export:
+      Name: !Join [":", [!Ref "AWS::StackName", PrivateTwoId]]
+  PrivateTwoAz:
+    Description: PrivateTwo Az
+    Value: !GetAtt PrivateTwo.AvailabilityZone
+    Export:
+      Name: !Join [":", [!Ref "AWS::StackName", PrivateTwoAz]]

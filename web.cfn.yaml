@@ -1,0 +1,110 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: SampleWebServer
+Mappings:
+  Config:
+    EC2:
+      TagName: SampleWeb
+      KeyName: miyazaki # Name of an existing Amazon EC2 key pair for SSH access
+      AMIId: ami-035be7bafff33b6b6
+      InstanceType: t3.nano
+    VPC:
+      StackName: SampleVPCStack
+
+Resources:
+  WebServerInstance:
+    Type: AWS::EC2::Instance
+    Metadata:
+      AWS::CloudFormation::Init:
+        configSets:
+          setup:
+            - web
+        web:
+          packages:
+            yum:
+              httpd: []
+              php: []
+          files:
+            /var/www/html/index.php:
+              content: !Sub |
+                <?php
+                echo "<h1>AWS CloudFormation Sample PHP Application</h1>";
+                echo "<p>1st Release</p>";
+                ?>
+              mode: "000644"
+              owner: apache
+              group: apache
+            /etc/cfn/cfn-hup.conf:
+              content: !Sub |
+                [main]
+                stack=${AWS::StackName}
+                region=${AWS::Region}
+                interval=2
+              mode: "000400"
+              owner: root
+              group: root
+            /etc/cfn/hooks.d/cfn-auto-reloader.conf:
+              content: !Sub |
+                [cfn-auto-reloader-hook]
+                triggers=post.update
+                path=Resources.WebServerInstance.Metadata.AWS::CloudFormation::Init
+                action=/opt/aws/bin/cfn-init -v -s ${AWS::StackName} -r WebServerInstance -c setup --region ${AWS::Region}
+                runas=root
+          services:
+            sysvinit:
+              httpd:
+                enable: true
+                ensureRunning: true
+          commands:
+            setlocale:
+              command: "timedatectl set-timezone Asia/Tokyo"
+              ignoreErrors: true
+            sethostname:
+              command: "hostnamectl set-hostname myweb"
+              ignoreErrors: true
+    Properties:
+      InstanceType: !FindInMap [Config, EC2, InstanceType]
+      ImageId: !FindInMap [Config, EC2, AMIId]
+      KeyName: !FindInMap [Config, EC2, KeyName]
+      SubnetId: {"Fn::ImportValue": !Join [":", [!FindInMap [Config, VPC, StackName], PublicOneId]]}
+      SecurityGroupIds:
+        - !GetAtt SecurityGroup.GroupId
+      Tags:
+        - Key: Name
+          Value: !FindInMap [Config, EC2, TagName]
+      UserData: !Base64
+        "Fn::Sub": |
+          #!/bin/bash -xe
+          yum update -y
+          #Install the file and packages from the metadata
+          /opt/aws/bin/cfn-init -v -s ${AWS::StackName} -r WebServerInstance -c setup --region ${AWS::Region}
+          #Start up the cfn-hup daemon to listen for changes to the Web Server metadata
+          /opt/aws/bin/cfn-hup || error_exit "Failed to start cfn-hup"
+          # Signal the status from cfn-init
+          /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource WebServerInstance --region ${AWS::Region}
+    CreationPolicy:
+      ResourceSignal:
+        Timeout: PT3M
+  
+  SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Enable ssh and http
+      VpcId: {"Fn::ImportValue": !Join [":", [!FindInMap [Config, VPC, StackName], VpcId]]}
+      SecurityGroupIngress:
+        - Description: for ssh
+          IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+        - Description: for http
+          IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+
+Outputs:
+  url:
+    Description: URL
+    Value: !Join ["://", [http, !GetAtt WebServerInstance.PublicIp]]
+    Export:
+      Name: !Join [":", [!Ref "AWS::StackName", VpcId]]
