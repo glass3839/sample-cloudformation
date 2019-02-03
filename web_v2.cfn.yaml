@@ -1,0 +1,84 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: ApplicationLoadBalancer
+Mappings:
+  Config:
+    EC2:
+      TagName: SampleWeb
+      KeyName: miyazaki # Name of an existing Amazon EC2 key pair for SSH access
+      AMIId: ami-035be7bafff33b6b6
+      InstanceType: t3.nano
+    VPC:
+      StackName: SampleVPCStack
+    ALB:
+      TargetGroupName: tg-sampleweb
+      ALBName: alb-sampleweb
+
+Resources:
+
+  SecurityGroupALB:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !FindInMap [Config, ALB, ALBName]
+      GroupDescription: from internet via http
+      VpcId: {"Fn::ImportValue": !Join [":", [!FindInMap [Config, VPC, StackName], VpcId]]}
+      SecurityGroupIngress:
+        - Description: from internet
+          IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !FindInMap [Config, ALB, ALBName]
+
+  SecurityGroupWEB:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Join ["-", [ec2, !FindInMap [Config, EC2, TagName]]]
+      GroupDescription: from alb
+      VpcId: {"Fn::ImportValue": !Join [":", [!FindInMap [Config, VPC, StackName], VpcId]]}
+      SecurityGroupIngress:
+        - Description: from alb
+          IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          SourceSecurityGroupId: !GetAtt SecurityGroupALB.GroupId
+      Tags:
+        - Key: Name
+          Value: !Join ["-", [ec2, !FindInMap [Config, EC2, TagName]]]
+
+
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !FindInMap [Config, ALB, TargetGroupName]
+      HealthCheckProtocol: HTTP
+      HealthCheckPath: /index.php
+      HealthCheckPort: traffic-port
+      HealthyThresholdCount: 5
+      UnhealthyThresholdCount: 2
+      HealthCheckTimeoutSeconds: 5
+      HealthCheckIntervalSeconds: 30
+      Matcher:
+        HttpCode: 200
+      Port: 80
+      Protocol: HTTP
+      TargetGroupAttributes:
+        - Key: deregistration_delay.timeout_seconds
+          Value: 300
+        - Key: slow_start.duration_seconds
+          Value: 0
+        - Key: stickiness.enabled
+          Value: false
+        - Key: stickiness.type
+          Value: lb_cookie
+        - Key: stickiness.lb_cookie.duration_seconds
+          Value: 300
+      #Targets:
+      #  - Port: 80
+      #    Id: !Ref WebServerInstance1
+      TargetType: instance
+      VpcId: {"Fn::ImportValue": !Join [":", [!FindInMap [Config, VPC, StackName], VpcId]]}
+
+
+

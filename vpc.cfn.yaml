@@ -20,7 +20,9 @@ Mappings:
       Name: sample-logs-log
 
 Resources:
-  ### VPC ###
+  # 
+  # VPC
+  #
   SampleVPC:
     Type: AWS::EC2::VPC
     Properties:
@@ -31,7 +33,9 @@ Resources:
         - Key: Name
           Value: !FindInMap [Config, Vpc, Name]
   
-  ### Public Subnets ###
+  #
+  # Public Subnets
+  #
   PublicOne:
     Type: AWS::EC2::Subnet
     Properties:
@@ -53,7 +57,9 @@ Resources:
         - Key: Name
           Value: !FindInMap [Config, PublicTwo, Name]
 
-  ### Private Subnets ###
+  #
+  # Private Subnets
+  #
   PrivateOne:
     Type: AWS::EC2::Subnet
     Properties:
@@ -75,7 +81,9 @@ Resources:
         - Key: Name
           Value: !FindInMap [Config, PrivateTwo, Name]
 
-  ### Routing for Public Subnets ###
+  #
+  # InternetGateway
+  #
   InternetGateway:
     Type: AWS::EC2::InternetGateway
     Properties:
@@ -87,6 +95,10 @@ Resources:
     Properties:
       VpcId: !Ref SampleVPC
       InternetGatewayId: !Ref InternetGateway
+
+  #
+  # Routing for Public Subnets
+  #
   PublicRouteTable:
     Type: AWS::EC2::RouteTable
     Properties:
@@ -111,7 +123,9 @@ Resources:
       SubnetId: !Ref PublicTwo
       RouteTableId: !Ref PublicRouteTable
 
-  ### Routing for Private Subnets ###
+  #
+  # Routing for Private Subnets
+  #
   PrivateRouteTable:
     Type: AWS::EC2::RouteTable
     Properties:
@@ -130,7 +144,9 @@ Resources:
       SubnetId: !Ref PrivateTwo
       RouteTableId: !Ref PrivateRouteTable
 
-  ### VPC Endpoint for DynamoDB ###
+  #
+  # VPC Endpoint for DynamoDB
+  #
   EndpointDynamoDB:
     Type: AWS::EC2::VPCEndpoint
     Properties:
@@ -146,7 +162,9 @@ Resources:
       ServiceName: !Join [".", [com, amazonaws, {"Ref": "AWS::Region"}, dynamodb]]
       VpcId: !Ref SampleVPC
 
-  ### VPC Endpoint for S3 ###
+  #
+  # VPC Endpoint for S3
+  #
   EndpointS3:
     Type: AWS::EC2::VPCEndpoint
     Properties:
@@ -162,7 +180,9 @@ Resources:
       ServiceName: !Join [".", [com, amazonaws, {"Ref": "AWS::Region"}, s3]]
       VpcId: !Ref SampleVPC
 
-  ### S3 for AWS Logs ###
+  #
+  # S3 for AWS Logs
+  #
   S3AwsLogs:
     Type: AWS::S3::Bucket
     Properties:
@@ -200,6 +220,10 @@ Resources:
               Service: delivery.logs.amazonaws.com
             Action: s3:GetBucketAcl
             Resource: !GetAtt S3AwsLogs.Arn
+
+  #
+  # VPC Flow Log
+  #
   Flowlog:
     Type: AWS::EC2::FlowLog
     Properties:
