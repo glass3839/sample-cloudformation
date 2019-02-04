@@ -3,7 +3,7 @@ Description: SampleWebServer
 Mappings:
   Config:
     EC2:
-      TagName: SampleWeb
+      TagName: webapp
       KeyName: miyazaki # Name of an existing Amazon EC2 key pair for SSH access
       AMIId: ami-035be7bafff33b6b6
       InstanceType: t3.nano
@@ -12,7 +12,7 @@ Mappings:
 
 Resources:
   #
-  # EC2 Instance
+  # WebApplication
   #
   WebServerInstance:
     Type: AWS::EC2::Instance
@@ -25,7 +25,7 @@ Resources:
               command: "timedatectl set-timezone Asia/Tokyo"
               ignoreErrors: true
             sethostname:
-              command: "hostnamectl set-hostname MyWeb"
+              command: "hostnamectl set-hostname webapp"
               ignoreErrors: true
           packages:
             yum:
@@ -60,7 +60,6 @@ Resources:
       UserData: !Base64
         "Fn::Sub": |
           #!/bin/bash -xe
-          yum install -y aws-cfn-bootstrap
           yum update -y
           #Install the file and packages from the metadata
           /opt/aws/bin/cfn-init -v -s ${AWS::StackName} -r WebServerInstance --region ${AWS::Region}
@@ -96,4 +95,4 @@ Outputs:
     Description: URL
     Value: !Join ["://", [http, !GetAtt WebServerInstance.PublicIp]]
     Export:
-      Name: !Join [":", [!Ref "AWS::StackName", VpcId]]
+      Name: URL

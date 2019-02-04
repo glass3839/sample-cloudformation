@@ -3,7 +3,9 @@ Description: ApplicationLoadBalancer
 Mappings:
   Config:
     EC2:
-      TagName: SampleWeb
+      TagName: webapp
+      TagName1: webapp1
+      TagName2: webapp2
       KeyName: miyazaki # Name of an existing Amazon EC2 key pair for SSH access
       AMIId: ami-035be7bafff33b6b6
       InstanceType: t3.nano
@@ -14,13 +16,16 @@ Mappings:
       ALBName: alb-sampleweb
 
 Resources:
-
+  #
+  # SecurityGroup for ALB
+  #
   SecurityGroupALB:
     Type: AWS::EC2::SecurityGroup
     Properties:
       GroupName: !FindInMap [Config, ALB, ALBName]
       GroupDescription: from internet via http
       VpcId: {"Fn::ImportValue": !Join [":", [!FindInMap [Config, VPC, StackName], VpcId]]}
+      # from internet via http
       SecurityGroupIngress:
         - Description: from internet
           IpProtocol: tcp
@@ -30,24 +35,142 @@ Resources:
       Tags:
         - Key: Name
           Value: !FindInMap [Config, ALB, ALBName]
-
+  #
+  # SecurityGroup for WebApplication
+  #
   SecurityGroupWEB:
     Type: AWS::EC2::SecurityGroup
     Properties:
       GroupName: !Join ["-", [ec2, !FindInMap [Config, EC2, TagName]]]
       GroupDescription: from alb
       VpcId: {"Fn::ImportValue": !Join [":", [!FindInMap [Config, VPC, StackName], VpcId]]}
+      # from ALB via http
       SecurityGroupIngress:
         - Description: from alb
           IpProtocol: tcp
           FromPort: 80
           ToPort: 80
-          SourceSecurityGroupId: !GetAtt SecurityGroupALB.GroupId
+          SourceSecurityGroupId: !Ref SecurityGroupALB
       Tags:
         - Key: Name
           Value: !Join ["-", [ec2, !FindInMap [Config, EC2, TagName]]]
-
-
+  #
+  # WebApplication #1
+  #
+  WebServerInstance1:
+    Type: AWS::EC2::Instance
+    # Setup WebApplication
+    Metadata:
+      AWS::CloudFormation::Init:
+        config:
+          commands:
+            setlocale:
+              command: "timedatectl set-timezone Asia/Tokyo"
+              ignoreErrors: true
+            sethostname:
+              command: "hostnamectl set-hostname webapp1"
+              ignoreErrors: true
+          packages:
+            yum:
+              httpd: []
+              php: []
+          files:
+            /var/www/html/index.php:
+              content: !Sub |
+                <?php
+                echo "<h1>AWS CloudFormation Sample PHP Application</h1>";
+                echo "<p>2</p>";
+                ?>
+              mode: "000644"
+              owner: apache
+              group: apache
+          services:
+            sysvinit:
+              httpd:
+                enabled: true
+                ensureRunning: true
+    # Launch Instance
+    Properties:
+      InstanceType: !FindInMap [Config, EC2, InstanceType]
+      ImageId: !FindInMap [Config, EC2, AMIId]
+      KeyName: !FindInMap [Config, EC2, KeyName]
+      SubnetId: {"Fn::ImportValue": !Join [":", [!FindInMap [Config, VPC, StackName], PublicOneId]]}
+      SecurityGroupIds:
+        - !GetAtt SecurityGroupWEB.GroupId
+      Tags:
+        - Key: Name
+          Value: !FindInMap [Config, EC2, TagName1]
+      UserData: !Base64
+        "Fn::Sub": |
+          #!/bin/bash -xe
+          yum update -y
+          #Install the file and packages from the metadata
+          /opt/aws/bin/cfn-init -v -s ${AWS::StackName} -r WebServerInstance1 --region ${AWS::Region}
+          # Signal the status from cfn-init
+          /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource WebServerInstance1 --region ${AWS::Region}
+    CreationPolicy:
+      ResourceSignal:
+        Timeout: PT3M
+  #
+  # WebApplication #2
+  #
+  WebServerInstance2:
+    Type: AWS::EC2::Instance
+    # Setup WebApplication
+    Metadata:
+      AWS::CloudFormation::Init:
+        config:
+          commands:
+            setlocale:
+              command: "timedatectl set-timezone Asia/Tokyo"
+              ignoreErrors: true
+            sethostname:
+              command: "hostnamectl set-hostname webapp2"
+              ignoreErrors: true
+          packages:
+            yum:
+              httpd: []
+              php: []
+          files:
+            /var/www/html/index.php:
+              content: !Sub |
+                <?php
+                echo "<h1>AWS CloudFormation Sample PHP Application</h1>";
+                echo "<p>3</p>";
+                ?>
+              mode: "000644"
+              owner: apache
+              group: apache
+          services:
+            sysvinit:
+              httpd:
+                enabled: true
+                ensureRunning: true
+    # Launch Instance
+    Properties:
+      InstanceType: !FindInMap [Config, EC2, InstanceType]
+      ImageId: !FindInMap [Config, EC2, AMIId]
+      KeyName: !FindInMap [Config, EC2, KeyName]
+      SubnetId: {"Fn::ImportValue": !Join [":", [!FindInMap [Config, VPC, StackName], PublicTwoId]]}
+      SecurityGroupIds:
+        - !GetAtt SecurityGroupWEB.GroupId
+      Tags:
+        - Key: Name
+          Value: !FindInMap [Config, EC2, TagName2]
+      UserData: !Base64
+        "Fn::Sub": |
+          #!/bin/bash -xe
+          yum update -y
+          #Install the file and packages from the metadata
+          /opt/aws/bin/cfn-init -v -s ${AWS::StackName} -r WebServerInstance2 --region ${AWS::Region}
+          # Signal the status from cfn-init
+          /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource WebServerInstance2 --region ${AWS::Region}
+    CreationPolicy:
+      ResourceSignal:
+        Timeout: PT3M
+  #
+  # TargetGroup WebApplication
+  #
   TargetGroup:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
     Properties:
@@ -69,16 +192,54 @@ Resources:
         - Key: slow_start.duration_seconds
           Value: 0
         - Key: stickiness.enabled
-          Value: false
+          Value: true
         - Key: stickiness.type
           Value: lb_cookie
         - Key: stickiness.lb_cookie.duration_seconds
           Value: 300
-      #Targets:
-      #  - Port: 80
-      #    Id: !Ref WebServerInstance1
+      Targets:
+        - Id: !Ref WebServerInstance1
+          Port: 80
+        - Id: !Ref WebServerInstance2
+          Port: 80
       TargetType: instance
       VpcId: {"Fn::ImportValue": !Join [":", [!FindInMap [Config, VPC, StackName], VpcId]]}
+  #
+  # Internet ALB
+  #
+  ALB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !FindInMap [Config, ALB, ALBName]
+      IpAddressType: ipv4
+      LoadBalancerAttributes:
+        - Key: deletion_protection.enabled
+          Value: false
+        - Key: idle_timeout.timeout_seconds
+          Value: 60
+        - Key: routing.http2.enabled
+          Value: true
+      Scheme: internet-facing
+      SecurityGroups:
+        - !Ref SecurityGroupALB
+      Subnets:
+        - {"Fn::ImportValue": !Join [":", [!FindInMap [Config, VPC, StackName], PublicOneId]]}
+        - {"Fn::ImportValue": !Join [":", [!FindInMap [Config, VPC, StackName], PublicTwoId]]}
+      Type: application
+  ALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - TargetGroupArn: !Ref TargetGroup
+          Type: forward
+      LoadBalancerArn: !Ref ALB
+      Port: 80
+      Protocol: HTTP
 
-
+Outputs:
+  url:
+    Description: URL
+    Value: !Join ["://", [http, !GetAtt ALB.DNSName]]
+    Export:
+      Name: URL
 
